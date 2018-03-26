@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+# John Walshaw, March 2018.
+
 use strict;
 use warnings;
 use autodie;
@@ -11,10 +13,22 @@ use List::Util qw( first );
 use HTML::Parser;
 
 my $cazy_id; # mandatory user-specified
+
 my $host = qq{www.cazy.org};
-my $suffix = qq{_all.html};
-#my $browser = qq{lynx -dump -width=1024};
-my $browser = qq{wget};
+my $ext = qq{.html}; # currently *not* user-specifiable (should be, really)
+my $category = qq{All};
+
+# 'default' because $category can be user-respecified:
+my $default_category_lc = lc $category;
+my $default_suffix = qq{_}.$default_category_lc.$ext;
+my $suffix; # can be directly user-specified; but if not, then a default value
+            # is derived from $category (which can also be user-respecified)
+
+my @expected_categories = ($category, # this WON'T be user-respecified
+  qw(Archaea Bacteria Eukaryota Viruses Structure Characterized));
+
+my $browser = qq{wget -O -}; # alternative might be e.g. qq{lynx -source -dump -width=1024};
+
 my $records_per_page = 1000; # seems to be the default for the CAZy website's
                              # 'PRINC' format, which is what you get by
                              # default in the <CAZyID>_all.html page
@@ -32,11 +46,54 @@ my $title_row_class = q{royaume};
 my $ignore_rows = 0; # specifies N: ignore the first N rows of that table
 my $use_column  = 1; # column-numbering also starts at 1 in this context
 
+=pod
+    these are for specifying the 'header' part of the CAZy family page,
+    which states the number of sequence records in each category; note that
+    these are not in an HTML table, but within a <SPAN>..</SPAN> which has a
+    "class" attribute, whose value is "choix"; there is one such span per
+    category (All, Bacteria, Structure, etc).
+=cut
+
+my $stats_tag         = q{span};
+my $stats_attr_name   = q{class};
+my $stats_attr_value  = q{choix};
+
+# specify the tags to look for when parsing the data tables - it is possible
+# to be too absracted....
+my $table_tag  = q{table};
+my $row_tag    = q{tr};
+my $column_tag = q{td}; # note that <TH></TH> tags are thus ignored as far as
+                        # data parsing s concerned; but they are noted:
+my $heading_tag = q{th};
+
+# along the same lines as $stats_attr_name, $stats_attr_value
+my $table_attr_name  = q{id};
+my $table_attr_value = q{pos_onglet};
+
+=pod
+    Note that the column required is specified by number (see $use_column
+    above), rather than header name; header name would indeed be possible to
+    use to determine the correct number, as long as there are no colspan
+    attributes, and indeed there are not in these CAZy pages, e.g.:
+
+    <tr id="line_titre"><td>Protein Name</td> <td>EC#</td><td>Organism</td><td>GenBank</td>
+                        <td>Uniprot</td><td>PDB/3D</td><td></td></tr>
+
+    note that such a line is ignored due to the value of the "id" attribute
+    matching $title_row_id, i.e. 'line_titre'
+=cut
+
+# counters of which table, row, column we are in
+my $table_index  = 0;
+my $row_index    = 0;
+my $column_index = 0;
+
+my $verbosity = 0;
 my $show_usage;
 my $show_help;
 my $show_manual;
 
-my $example_web_page = qq{GH33_$suffix};
+my $example_web_page = qq{GH33_$default_suffix};
 my $example_url = qq{http://$host/$example_web_page};
 
 my $usage = qq{Usage:\n$0 [ options ] [ -cazyid ] CAZyID [ PAGESDIR ]};
@@ -46,7 +103,9 @@ my $help = qq{$usage
 
 	-cazyid		STRING
 	-outdir		STRING
+        -category	STRING
 	-force
+        -verbosity	INTEGER
 	-usage
 	-help
 	-man
@@ -84,11 +143,18 @@ my $man = qq{$usage
 				here, so if they are absent they will be
 				downloaded here first (see -force).
 
+        -category	STRING	The category of sequences whose IDs (and
+				possibly sequence records too) to download.
+				This is expected to be one of:
+
 	-force			If specified, then an attempt will always be
 				made to download the webpages to the output dir
-				(see -outdir) will always be made. If -force is
-				not used, then the download of each page will be
-				done only if the page is absent from there.
+				(see -outdir). If -force is not used, then the
+				download of each page will be done only if the
+				page is absent from there.
+
+        -verbosity	INTEGER	Verbosity level; larger values produce more
+				verbose output. Default $verbosity.
 
 	-usage			Show brief usage summary, then exit.
 
@@ -161,7 +227,7 @@ Advanced options:
 
 	-suffix		STRING	Suffix to append to CAZy family ID, to form
 				name of (first) web page (see 'pagination'
-				below). Default is $suffix .
+				below). Default is $default_suffix .
 				Therefore, an example page name is $example_web_page
 
 	-pagesize	INTEGER	This appears to be the maximum number of rows
@@ -242,7 +308,9 @@ is TAXO) by using -pagesize.
 croak "$usage_plus" if !GetOptions(
     "cazyid=s"		=> \$cazy_id         ,
     "outdir=s"		=> \$out_pages_dir   ,
+    "category=s"	=> \$category        ,
     "force"		=> \$clobber         ,
+    "verbosity=i"	=> \$verbosity       ,
     "usage"		=> \$show_usage      ,
     "help"		=> \$show_help       ,
     "man"		=> \$show_manual     ,
@@ -265,6 +333,540 @@ $show_help   && do { print $help      ; exit 0; };
 $show_usage  && do { print $usage_plus; exit 0; };
 
 $cazy_id ||= shift or croak $usage_plus;
+
+my $capital   = uc(substr $category, 0, 1);
+my $remainder = lc(substr $category, 1   );
+
+if (($category =~ s{ \A [a-z] .* \z }{${capital}$remainder}xms) ||
+    ($category =~ s{ \A . .*[A-Z].* \z }{${capital}$remainder}xms)) {
+    print STDERR qq{WARNING: modified case of category name: is now '$category'\n};
+}
+
+print STDERR qq{WARNING: '$category' is not a known category - so this will probably fail\n}
+  if !first { $_ eq $category } @expected_categories;
+
+# Note that $category may now have a non-default value, due to user-spec
+my $category_lc = lc $category;
+# $suffix can be specified *directly* by the user; but if it hasn't, then
+# it is derived from the user-selected (or default) category
+$suffix ||= qq{_}.$category_lc.$ext;
+
+my $url_root       = qq{http://$host/${cazy_id}};
+
+my $summary_url    = $url_root.$ext;
+
+my $summary_page   = $cazy_id.$ext; # just the filename
+
+my $category_url0  = $url_root.$suffix; # full URL of 1st page of req'd category
+
+my $category_page0 = ${cazy_id}.q{_}.$category_lc.$ext;
+
+print qq{Summary of pagination parameters - check the manual (use -man) if you are unsure:
+
+	category:		$category
+	records per page:	$records_per_page
+	pagination style:	$page_context
+	URL of first page:	$category_url0
+	URL of Summary page:	$summary_url
+
+
+};
+
+
+=pod
+
+    These globals are used by several subroutines, including get_cat_stats() and
+    the HTML::Parser event-handlers, which are called via HTML::Parser->parse()
+    within get_cat_stats().
+
+=cut
+
+my $get_text; # boolean
+my @text_items;
+
+my $in_data_table; # boolean
+my $in_data_rows;  # boolean
+
+=pod
+
+    Fetch/read the *Summary* page, to get the stats on the number of records
+    in each category (this information is also present on the category-
+    specific pages too, but they can be quite large; so avoid unnecessary
+    download)
+
+=cut
+
+
+my $seqs_per_category_href = get_cat_stats(
+    url         => $summary_url     ,
+    tag         => $stats_tag       ,
+    attr        => $stats_attr_name ,
+    val         => $stats_attr_value,
+    get_command => $browser         ,
+    outfile     => $summary_page    ,
+    outdir      => $out_pages_dir   ,
+    errfile     => qq{$summary_page.stderr},
+    clobber     => $clobber         ,
+);
+
+=pod
+
+    Sanity-check the resulting per-category stats, and display a summary
+
+=cut
+
+my @unretrieved_cat;
+
+for my $cat (@expected_categories) {
+
+    if (!exists $seqs_per_category_href->{$cat}) {
+        print qq{NO SEQUENCE TOTAL RETRIEVED FOR CATEGORY '$cat'\n};
+        push @unretrieved_cat, $cat;
+        next;
+    }
+
+    printf qq{category %-20s : %6d sequence}, $cat, $seqs_per_category_href->{$cat};
+    print qq{}, ($seqs_per_category_href->{$cat} == 1) ? qq{} : qq{s}, qq{\n};
+}
+
+my @unexpected_cat = grep {
+    my $rcat = $_;
+    !first { $_ eq $rcat } @expected_categories
+} (keys %{$seqs_per_category_href});
+
+if (@unexpected_cat) {
+
+    print qq{THESE UNEXPECTED CATEGORIES WERE FOUND IN THE WEB PAGE:\n\t},
+        join(qq{\n\t}, @unexpected_cat), qq{\n\n};
+
+}
+
+print Dumper $seqs_per_category_href if $verbosity > 2;
+
+parse_pages(
+        first_url        => $category_url0   ,
+        first_page       => $category_page0  ,
+        page_context     => $page_context    ,
+        records_per_page => $records_per_page,
+        total_records    => $seqs_per_category_href->{$category},
+        outdir           => $out_pages_dir   ,
+        clobber          => $clobber         ,
+        get_command      => $browser         ,
+);
+
+exit 1;
+
+sub fetch_read_write {
+
+=pod
+
+    Note the logic:
+
+    outfile is 	outfile	clobber	read action		write action
+    specified   already
+		exists
+
+	F	F	F	fetch remote content	none
+	F	F	T	fetch remote content	none
+	F	T	F	fetch remote content*	none
+	F	T	T	fetch remote content	none
+(1)	T	F	F	fetch remote content	create local copy
+	T	F	T	fetch remote content	create local copy
+(2)	T	T	F	read local content	none
+	T	T	T	fetch remote content	(re-)create local copy
+
+*(because outfile name is unspecified)
+
+(1) and (2) are likely to be the most common scenarios; no clobbering is done,
+and so if a copy of the web page already exists locally, then read it; otherwise
+read the remote content, and write that content to a local copy
+
+=cut
+
+    my %arg = @_;
+
+    my $local_file = $arg{local_file};
+    my $clobber    = $arg{clobber};
+
+    my $open_expr;
+    my $mode;
+    my $ofh;
+
+    if ($local_file && (-f $local_file) && !$clobber) {
+        print STDERR qq{local copy ($local_file) already exists; will not fetch new copy\n};
+        $mode = '<';
+        $open_expr = $local_file;
+    }
+    else {
+        $mode = '-|';
+        $open_expr  = qq{$arg{get_command} $arg{url}};
+        $open_expr .= qq{ 2> $arg{errfile}} if $arg{errfile};
+    }
+
+    if ($local_file && ((!-f $local_file) || $clobber)) {
+        print STDERR qq{creating local copy ($local_file)},
+            (-f $local_file) ? qq{ - OVERWRITING EXISTING COPY} : qq{}, qq{\n};
+        open $ofh, '>', $local_file;
+    }
+
+    return ($open_expr, $mode, $ofh);
+}
+
+
+sub get_cat_stats {
+
+    my %arg = @_;
+
+    my $parser = HTML::Parser->new( api_version => 3,
+                                    start_h => [\&start_hsectn, "tagname, attr"],
+                                    end_h   => [\&end_hsectn  , "tagname"      ],
+                                    text_h  => [\&text_hsectn , "dtext"        ],
+                                    marked_sections => 1,
+                              );
+
+    my ($local_file, $clobber) = @arg{'outfile','clobber'};
+
+    $local_file = qq{$arg{outdir}/$arg{outfile}}
+      if $local_file && $arg{outdir};
+
+    
+    my ($open_expr, $mode, $ofh) = fetch_read_write(
+        local_file  => $local_file      , clobber => $clobber ,
+        get_command => $arg{get_command}, url     => $arg{url},
+    );
+
+=pod
+    Read the HTML from STDOUT and conditionally capture STDERR;
+    note that the command is *assumed to deliver the HTML
+    content to STDOUT*. This may seem counterintuitive if using wget, which
+    would by default write it to a file (name determined by URL). But the
+    way it's done here is more flexible (a completely different command
+    could be substituted for the wget...., e.g. lynx -dump -source).
+    Also, this gives the option of retaining the Summary web page (if
+    $arg{outfile} is defined) or not.
+=cut
+
+    print qq{opening: $open_expr\n};
+    open(my $fh, $mode, $open_expr);
+    # should be easily small enough to be slurp-safe
+    #my @summary_content = <$fh>;
+
+    # Note that GTHML::Parser->parse() won't play ball with this form:
+    # $parser->parse(<$fh>); so read line-by-line
+
+# These have now been made global:
+#    my $get_text; # boolean
+#    my @text_items;
+
+    while (defined (my $line = <$fh>)) {
+        #print qq{LINE: $line};
+        $parser->parse($line);
+        print $ofh $line if $ofh;
+    }
+
+    close $fh;
+    close $ofh if $ofh;
+    $parser->eof();
+
+    print qq{closing\n};
+
+    # sanity check
+    croak qq{Unexpected category-stats content:\n\t}
+          .join(qq{,\n\t}, @text_items)
+          .qq{\n}
+      if (@text_items % 2);
+
+    my %cat_frequency = @text_items;
+    for my $tally (values %cat_frequency) {
+        $tally =~ s{ (?: \A \s* [(] \s* | \s* [)] \s* \z ) }{}gxms;
+    }
+
+    return \%cat_frequency;
+
+    # these 3 subroutines are intentionally inside the scope of the current
+    # subroutine get_cat_stats()
+}
+
+sub start_hsectn {
+
+    my ($tagname, $attr_href) = @_;
+###print qq{start_hsectn($tagname, $attr_href); looking for $stats_tag\n};
+    return if $tagname ne $stats_tag;
+    return if !defined $attr_href->{$stats_attr_name};
+    return if $attr_href->{$stats_attr_name} ne $stats_attr_value;
+
+    print qq{found $tagname with $stats_attr_name == "$stats_attr_value"\n}
+      if $verbosity > 1;
+    $get_text++; # ought to only ever reach a max of 1
+}
+
+sub end_hsectn {
+
+    my ($tagname) = @_;
+###print qq{end_hsectn()\n};
+    return if $tagname ne $stats_tag;
+    return if !$get_text;
+    print qq{closing parsed $tagname\n}
+      if $verbosity > 1;
+    $get_text = 0;
+}
+
+sub text_hsectn {
+
+    my ($content_text) = @_;
+###print qq{text_hsectn()\n};
+
+    return if !$get_text;
+
+    push @text_items, $content_text;
+    print qq{\tfound text: '$content_text'\n}
+      if $verbosity > 0;
+}
+#}
+
+sub start_dsectn {
+
+    my ($tagname, $attr_href) = @_;
+###print qq{start_hsectn($tagname, $attr_href); looking for $stats_tag\n};
+    my $use_tag = first { lc $_ eq lc $tagname } (
+        $table_tag, $row_tag, $column_tag, $heading_tag
+    );
+    return if !defined $use_tag;
+
+    TAGNAME: {
+        (lc $tagname eq lc $table_tag) && do {
+            print qq{found table };
+            $table_index++;
+            my $table_id;
+
+            if (defined $attr_href->{$table_attr_name}) {
+
+                $table_id = $attr_href->{$table_attr_name};
+
+=pod
+    a sanity check; if the table with the expected ID also has the expected
+    'index' (i.e. ordinal number of the table of all the tables in the page)
+    then all is ok; otherwise flag a big warning - it indicates that the format
+    of the html pages at the remote end may have changed since this script was
+    written
+=cut
+
+                if ($table_id eq $table_attr_value) {
+                    print qq{with },
+                      qq{$table_attr_name = '$table_attr_value';},
+                      qq{table index = $table_index; },
+                      ($table_index == $use_table) ?
+                          qq{ as expected} :
+                          qq{ WARNING - EXPECTED TABLE WITH INDEX $table_index}.
+                          qq{ TO BE THE TABLE WITH THIS $table_attr_name},
+                      qq{\n};
+                      # but process the table anyway:
+                      $in_data_table++; # should never exceed 1
+                    last TAGNAME;
+                }
+            }
+
+            # note that in this case, the table ISN'T processed
+            print qq{: WARNING - EXPECTED TABLE WITH INDEX $table_index}.
+                  qq{TO HAVE ATTRIBUTE $table_attr_name = '$table_attr_value'\n}
+            if ($table_index == $use_table) && !$table_id;
+
+            print qq{ - ignoring this table\n};
+            last TAGNAME;
+        };
+
+        (lc $tagname eq lc $row_tag) && do {
+            return if !$in_data_table;
+
+            # ignore this row if a number of rows to ignore has been specified
+            # and there are still some remaining to ignore...
+            if ($ignore_rows) {# only decrease if it's nonzero
+                $ignore_rows--;
+                print qq{\tignoring this row (irrespective of whether it's a }.
+                      qq{title row; $ignore_rows more to ignore\n};
+                undef $in_data_rows;
+                last TAGNAME; # or return ?
+            }
+###print Dumper($attr_href);
+            # ignore title rows
+            if (
+                 ( (defined $attr_href->{class}) &&
+                   ($attr_href->{class} eq $title_row_class))
+               ||
+                 ( (defined $attr_href->{id}) &&
+                   ($attr_href->{id} eq $title_row_id))
+               ) {
+                   print qq{\tignoring title row\n};
+               undef $in_data_rows;
+               last TAGNAME;
+            }
+            # risky postfix '++' in a print statement...
+            print qq{\t}, ($in_data_rows++) ? qq{next} : qq{first},
+                  qq{ data row found ($in_data_rows)\n};
+            #$in_data_rows++; # this actually keeps a count of how many data rows
+            # yep, it's inconsistent; attr name is hardcoded here (c.f. above)
+            last TAGNAME;
+        };
+
+        (lc $tagname eq lc $column_tag) && do {
+            return if !$in_data_table || !$in_data_rows;
+            print qq{\t\tfound data cell ($tagname)\n};
+            last TAGNAME;
+        };
+    }
+
+#    print qq{found $tagname\n} # with $stats_attr_name == "$stats_attr_value"\n}
+#      if $verbosity > 1;
+###    $get_text++; # ought to only ever reach a max of 1
+}
+
+sub end_dsectn {
+
+    my ($tagname) = @_;
+    my $use_tag = first { lc $_ eq lc $tagname } (
+        $table_tag, $row_tag, $column_tag, $heading_tag
+    );
+    return if !defined $use_tag;
+
+    my $padding = qq{};
+
+    TAGNAME: {
+        (lc $tagname eq lc $table_tag) && do {
+            last TAGNAME if !$in_data_table;
+            print qq{end of data table\n};
+            undef $in_data_table;
+            undef $in_data_rows;
+            last TAGNAME;
+        };
+
+        (lc $tagname eq lc $row_tag) && do {
+            return if !$in_data_table || !$in_data_rows;
+            $padding = qq{\t};
+            last TAGNAME;
+        };
+        (lc $tagname eq lc $column_tag) && do {
+            return if !$in_data_table || !$in_data_rows;;
+            $padding = qq{\t\t};
+            last TAGNAME;
+        };
+        (lc $tagname eq lc $heading_tag) && do {
+            return if !$in_data_table || !$in_data_rows;;
+            $padding = qq{\t\t};
+            last TAGNAME;
+        };
+    }
+    print qq{${padding}closing parsed $tagname\n}
+      if $verbosity > 1;
+
+}
+
+sub text_dsectn {
+
+    my ($content_text) = @_;
+###print qq{text_hsectn()\n};
+
+#    return if !$get_text;
+
+#    push @text_items, $content_text;
+#    print qq{\tfound text: '$content_text'\n}
+#      if $verbosity > 0;
+}
+
+##----------------------------------------------------------
+exit 0;
+
+sub parse_pages {
+
+    my %arg = @_;
+
+    #YATSSBOO (yet another This Script Should Be OO)
+    my ($first_page_url  , $pagination_style,
+        $records_per_page, $n_records_to_get,
+        $out_pages_dir   , $first_file      ,
+        $clobber         ,
+        )
+        = @arg{'first_url', 'page_context',
+               'records_per_page', 'total_records',
+               'outdir' , 'first_page', 'clobber'};
+
+    # note that this 'fails' if the number of records to get is 0
+    my $n_pages = int(($n_records_to_get - 1) / $records_per_page) + 1; 
+
+    my $url = $first_page_url; 
+    (my $file_root = $first_file) =~ s{ \A ( .* ) ([.] [^.]+) \z }{$1}xms;
+    my $ext = $2;
+
+
+    for my $page ( 0 .. $n_pages - 1) {
+###    my $outfile = qq{${cazy_id}_$page.html};
+###    my $outpath = qq{$out_pages_dir/$outfile};
+
+        my $local_file = $first_file if defined $first_file;
+
+        if ($page) {
+
+            $url = $first_page_url .qq{?debut_$page_context=} . $page * $records_per_page . qq{#pagination_$page_context};
+            $local_file = $file_root.q{_}.$page.$ext if defined $local_file;
+        }
+
+        my ($open_expr, $mode, $ofh) = fetch_read_write(
+            local_file  => $local_file      , clobber => $clobber ,
+            get_command => $arg{get_command}, url     => $url     ,
+        );
+
+        # note that if the output file is to be opened at all,
+        # then it will have already been done; but the input is not open,
+        # and is specified by $open_expr and $mode
+        print qq{$open_expr, $mode}, (defined $ofh) ?  qq{, $ofh} : qq{}, qq{\n};
+        parse_single_page($open_expr, $mode, $ofh);
+        ###print qq{get_seq_ids($outpath)\n};
+    }
+}
+
+sub parse_single_page {
+
+    my $open_expr = shift;
+    my $mode = shift;
+    my $ofh = shift;
+
+    my $parser = HTML::Parser->new( api_version => 3,
+                                    start_h => [\&start_dsectn, "tagname, attr"],
+                                    end_h   => [\&end_dsectn  , "tagname"      ],
+                                    text_h  => [\&text_dsectn , "dtext"        ],
+                                    marked_sections => 1,
+                              );
+
+    # Note that these are globals
+    $table_index = 0;
+    $row_index = 0;
+    $column_index = 0;
+    
+
+    print qq{opening: $open_expr\n};
+    open(my $fh, $mode, $open_expr);
+    # should be easily small enough to be slurp-safe
+    #my @summary_content = <$fh>;
+
+    # Note that GTHML::Parser->parse() won't play ball with this form:
+    # $parser->parse(<$fh>); so read line-by-line
+
+# These have now been made global:
+#    my $get_text; # boolean
+#    my @text_items;
+
+    while (defined (my $line = <$fh>)) {
+        #print qq{LINE: $line};
+        $parser->parse($line);
+        print $ofh $line if $ofh;
+    }
+
+    close $fh;
+    close $ofh if $ofh;
+    $parser->eof();
+
+    print qq{closing\n};
+
+}
 
 my $default_url = qq{http://$host/${cazy_id}$suffix};
 my $get_first_page = qq{$browser $default_url};
