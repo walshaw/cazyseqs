@@ -62,9 +62,13 @@ my $stats_attr_value  = q{choix};
 # to be too absracted....
 my $table_tag  = q{table};
 my $row_tag    = q{tr};
-my $column_tag = q{td}; # note that <TH></TH> tags are thus ignored as far as
+my $cell_tag = q{td}; # note that <TH></TH> tags are thus ignored as far as
                         # data parsing s concerned; but they are noted:
 my $heading_tag = q{th};
+my $anchor_tag  = q{a}; # ... yes, too abstracted...
+
+my @data_associated_tags = ($table_tag  , $row_tag, $cell_tag,
+                            $heading_tag, $anchor_tag);
 
 # along the same lines as $stats_attr_name, $stats_attr_value
 my $table_attr_name  = q{id};
@@ -386,6 +390,8 @@ my @text_items;
 
 my $in_data_table; # boolean
 my $in_data_rows;  # boolean
+my $in_data_columns; # boolean; plural is used, to signal possible future
+                     # expansion where > 1 column is a 'data column'
 
 =pod
 
@@ -546,7 +552,7 @@ sub get_cat_stats {
     $arg{outfile} is defined) or not.
 =cut
 
-    print qq{opening: $open_expr\n};
+    print STDERR qq{opening: $open_expr\n};
     open(my $fh, $mode, $open_expr);
     # should be easily small enough to be slurp-safe
     #my @summary_content = <$fh>;
@@ -568,7 +574,7 @@ sub get_cat_stats {
     close $ofh if $ofh;
     $parser->eof();
 
-    print qq{closing\n};
+    print STDERR qq{closing\n};
 
     # sanity check
     croak qq{Unexpected category-stats content:\n\t}
@@ -595,7 +601,7 @@ sub start_hsectn {
     return if !defined $attr_href->{$stats_attr_name};
     return if $attr_href->{$stats_attr_name} ne $stats_attr_value;
 
-    print qq{found $tagname with $stats_attr_name == "$stats_attr_value"\n}
+    print STDERR qq{found $tagname with $stats_attr_name == "$stats_attr_value"\n}
       if $verbosity > 1;
     $get_text++; # ought to only ever reach a max of 1
 }
@@ -606,7 +612,7 @@ sub end_hsectn {
 ###print qq{end_hsectn()\n};
     return if $tagname ne $stats_tag;
     return if !$get_text;
-    print qq{closing parsed $tagname\n}
+    print STDERR qq{closing parsed $tagname\n}
       if $verbosity > 1;
     $get_text = 0;
 }
@@ -619,24 +625,42 @@ sub text_hsectn {
     return if !$get_text;
 
     push @text_items, $content_text;
-    print qq{\tfound text: '$content_text'\n}
-      if $verbosity > 0;
+    print STDERR qq{\tfound text: '$content_text'\n}
+      if $verbosity > 1;
 }
 #}
+
+sub data_related_tag {
+
+    my $tag_name = shift;
+
+    # use a global; because, naturally, this script has 'growed' and I've not
+    # bothered to design it properly (OO approach would be much better here)
+
+    my $use_tag = first { lc $_ eq lc $tag_name } (@data_associated_tags);
+    return $use_tag;
+}
 
 sub start_dsectn {
 
     my ($tagname, $attr_href) = @_;
 ###print qq{start_hsectn($tagname, $attr_href); looking for $stats_tag\n};
-    my $use_tag = first { lc $_ eq lc $tagname } (
-        $table_tag, $row_tag, $column_tag, $heading_tag
-    );
-    return if !defined $use_tag;
+    if ($verbosity > 2) {
+        print STDERR qq{found tag: $tagname\n};
+        print STDERR qq{\tinside data table: },
+          ($in_data_table) ? qq{true} : qq{false}, qq{\n};
+        print STDERR qq{\tinside data row: },
+          ($in_data_rows) ? qq{true} : qq{false}, qq{\n};
+        print STDERR qq{\tinside data cell (column): },
+          ($in_data_columns) ? qq{true} : qq{false}, qq{\n};
+    }
+
+    return if !data_related_tag($tagname);
 
     TAGNAME: {
         (lc $tagname eq lc $table_tag) && do {
-            print qq{found table };
-            $table_index++;
+            print STDERR qq{found table } if $verbosity;
+            $table_index++; # note that the first table is table 1 not table 0
             my $table_id;
 
             if (defined $attr_href->{$table_attr_name}) {
@@ -652,37 +676,46 @@ sub start_dsectn {
 =cut
 
                 if ($table_id eq $table_attr_value) {
-                    print qq{with },
-                      qq{$table_attr_name = '$table_attr_value';},
+                    print STDERR qq{with },
+                      qq{$table_attr_name = '$table_attr_value'; },
                       qq{table index = $table_index; },
                       ($table_index == $use_table) ?
                           qq{ as expected} :
                           qq{ WARNING - EXPECTED TABLE WITH INDEX $table_index}.
                           qq{ TO BE THE TABLE WITH THIS $table_attr_name},
-                      qq{\n};
+                      qq{\n} if $verbosity;
                       # but process the table anyway:
                       $in_data_table++; # should never exceed 1
+                      print STDERR qq{reading from table\n};
                     last TAGNAME;
                 }
             }
 
             # note that in this case, the table ISN'T processed
-            print qq{: WARNING - EXPECTED TABLE WITH INDEX $table_index}.
+            print STDERR qq{: WARNING - EXPECTED TABLE WITH INDEX $table_index}.
                   qq{TO HAVE ATTRIBUTE $table_attr_name = '$table_attr_value'\n}
             if ($table_index == $use_table) && !$table_id;
 
-            print qq{ - ignoring this table\n};
+            print STDERR qq{ - ignoring this table\n} if $verbosity;
             last TAGNAME;
         };
 
         (lc $tagname eq lc $row_tag) && do {
-            return if !$in_data_table;
+            return if !$in_data_table; # 'last TAGNAME' will do instead of return?
+
+            $column_index = 0; # this is redundant really
+
+            # note that $row_index counts the rows which are in a data-associated
+            # table only; and that it counts *all* rows in that table,
+            # irrespective of whether they are ignored; this isn't used for
+            # anything of note though
+            $row_index++;      # note that the first row is row 1 not row 0
 
             # ignore this row if a number of rows to ignore has been specified
             # and there are still some remaining to ignore...
             if ($ignore_rows) {# only decrease if it's nonzero
                 $ignore_rows--;
-                print qq{\tignoring this row (irrespective of whether it's a }.
+                print STDERR qq{\tignoring this row (irrespective of whether it's a }.
                       qq{title row; $ignore_rows more to ignore\n};
                 undef $in_data_rows;
                 last TAGNAME; # or return ?
@@ -690,30 +723,61 @@ sub start_dsectn {
 ###print Dumper($attr_href);
             # ignore title rows
             if (
+            # yep, it's inconsistent; attr name is hardcoded here (c.f. above)
                  ( (defined $attr_href->{class}) &&
                    ($attr_href->{class} eq $title_row_class))
                ||
                  ( (defined $attr_href->{id}) &&
                    ($attr_href->{id} eq $title_row_id))
                ) {
-                   print qq{\tignoring title row\n};
+               print STDERR qq{\tignoring title row\n} if $verbosity > 1;
                undef $in_data_rows;
                last TAGNAME;
             }
+
             # risky postfix '++' in a print statement...
-            print qq{\t}, ($in_data_rows++) ? qq{next} : qq{first},
-                  qq{ data row found ($in_data_rows)\n};
+            print STDERR qq{\t}, ($in_data_rows++) ? qq{next} : qq{first},
+                  qq{ data row found ($in_data_rows)\n} if $verbosity > 1;
             #$in_data_rows++; # this actually keeps a count of how many data rows
-            # yep, it's inconsistent; attr name is hardcoded here (c.f. above)
             last TAGNAME;
         };
 
-        (lc $tagname eq lc $column_tag) && do {
-            return if !$in_data_table || !$in_data_rows;
-            print qq{\t\tfound data cell ($tagname)\n};
+        (lc $tagname eq lc $cell_tag) && do {
+            return if !$in_data_table || !$in_data_rows; # 'last TAGNAME' will do instead?
+
+            # note that there is intentionally no 'ignore columns' option
+            # (unlike 'ignore rows'); so no tests are needed for that; but a
+            # counter of columns is required, since the column-of-interest is
+            # specified by an index
+            $column_index++; # note that the first column is column 1 not column 0
+
+            print STDERR qq{\t\tcolumn: $column_index\n} if $verbosity > 2;
+
+            # simple test here; may later be replaced by checking whether the
+            # index is in a particular range or is a member of a list of (not
+            # necessarily consecutive) columns; but for now, it has to be "the"
+            # column
+            if ($column_index == $use_column) {
+                $in_data_columns++;
+            }
+            else {
+                undef $in_data_columns;
+                last TAGNAME;
+            }
+
+            print STDERR qq{\t\tfound data cell ($tagname)\n};
             last TAGNAME;
         };
-    }
+
+        (lc $tagname eq lc $anchor_tag) && do {
+            return if !$in_data_table || !$in_data_rows || !$in_data_columns;
+            print STDERR qq{\t\t\trequired data cell contains anchor: };
+            print STDERR qq{\t\t\t\t$_ = $attr_href->{$_}\n}
+                for (keys %{$attr_href});
+            last TAGNAME;
+        };
+
+    } # TAGNAME end
 
 #    print qq{found $tagname\n} # with $stats_attr_name == "$stats_attr_value"\n}
 #      if $verbosity > 1;
@@ -723,39 +787,54 @@ sub start_dsectn {
 sub end_dsectn {
 
     my ($tagname) = @_;
-    my $use_tag = first { lc $_ eq lc $tagname } (
-        $table_tag, $row_tag, $column_tag, $heading_tag
-    );
-    return if !defined $use_tag;
+
+    return if !data_related_tag($tagname);
 
     my $padding = qq{};
 
     TAGNAME: {
         (lc $tagname eq lc $table_tag) && do {
             last TAGNAME if !$in_data_table;
-            print qq{end of data table\n};
+            print STDERR qq{end of data table\n};
             undef $in_data_table;
             undef $in_data_rows;
+            undef $in_data_columns;
+            $row_index = 0; # N.B. this is also set to zero when a row *starts*
+            $column_index = 0;
             last TAGNAME;
         };
 
         (lc $tagname eq lc $row_tag) && do {
             return if !$in_data_table || !$in_data_rows;
+            # note that $in_data_rows is *not* made false just because the end of
+            # the row is reached; that occurs if either a new row starts which is
+            # identified as a non-data row, or if the table ends (see above)
+            undef $in_data_columns; # however, this *is* set to false (but it may
+                                    # well be already)
             $padding = qq{\t};
+            $column_index = 0;
             last TAGNAME;
         };
-        (lc $tagname eq lc $column_tag) && do {
-            return if !$in_data_table || !$in_data_rows;;
+
+        (lc $tagname eq lc $cell_tag) && do {
+            return if !$in_data_table || !$in_data_rows || !$in_data_columns;
             $padding = qq{\t\t};
             last TAGNAME;
         };
+
         (lc $tagname eq lc $heading_tag) && do {
-            return if !$in_data_table || !$in_data_rows;;
+            return if !$in_data_table || !$in_data_rows || !$in_data_columns;
+            $padding = qq{\t\t};
+            last TAGNAME;
+        };
+
+        (lc $tagname eq lc $anchor_tag) && do {
+            return if !$in_data_table || !$in_data_rows || !$in_data_columns;
             $padding = qq{\t\t};
             last TAGNAME;
         };
     }
-    print qq{${padding}closing parsed $tagname\n}
+    print STDERR qq{${padding}closing parsed $tagname\n}
       if $verbosity > 1;
 
 }
@@ -763,13 +842,10 @@ sub end_dsectn {
 sub text_dsectn {
 
     my ($content_text) = @_;
-###print qq{text_hsectn()\n};
 
-#    return if !$get_text;
+    return if !$in_data_columns;
 
-#    push @text_items, $content_text;
-#    print qq{\tfound text: '$content_text'\n}
-#      if $verbosity > 0;
+    print STDERR qq{DATA: '$content_text'\n};
 }
 
 ##----------------------------------------------------------
@@ -817,7 +893,9 @@ sub parse_pages {
         # note that if the output file is to be opened at all,
         # then it will have already been done; but the input is not open,
         # and is specified by $open_expr and $mode
-        print qq{$open_expr, $mode}, (defined $ofh) ?  qq{, $ofh} : qq{}, qq{\n};
+        print STDERR qq{$open_expr, $mode},
+                     (defined $ofh) ?  qq{, $ofh} : qq{},
+                     qq{\n} if $verbosity > 1;
         parse_single_page($open_expr, $mode, $ofh);
         ###print qq{get_seq_ids($outpath)\n};
     }
@@ -840,9 +918,9 @@ sub parse_single_page {
     $table_index = 0;
     $row_index = 0;
     $column_index = 0;
-    
 
-    print qq{opening: $open_expr\n};
+
+    print STDERR qq{opening: $open_expr\n};
     open(my $fh, $mode, $open_expr);
     # should be easily small enough to be slurp-safe
     #my @summary_content = <$fh>;
@@ -864,9 +942,13 @@ sub parse_single_page {
     close $ofh if $ofh;
     $parser->eof();
 
-    print qq{closing\n};
+    print STDERR qq{closing: $open_expr\n};
 
 }
+
+=pod
+
+    None of this gets executed, nor subroutines called by anything above...
 
 my $default_url = qq{http://$host/${cazy_id}$suffix};
 my $get_first_page = qq{$browser $default_url};
@@ -894,7 +976,7 @@ for my $page ( 0 .. $n_pages - 1) {
         print STDERR qq{$command\n};
         `$command` if ! -f $outpath;
     }
-    print qq{get_seq_ids($outpath)\n};
+    print STDERR qq{get_seq_ids($outpath)\n};
 }
 
 exit 0;
@@ -908,7 +990,7 @@ sub get_total {
     LINE:
     while (defined (my $line = <$fh>)) {
 
-=pod
+#=pod
     a sanity check involving an arbitrary number of lines; e.g. a typical
     arrangement is:
 
@@ -924,7 +1006,7 @@ sub get_total {
     really needed is the number in parentheses following the 'All' string
     (third line above). But the 'Statistics', 'Summary' and 'All' lines
     are explicitly checked for occurrence.
-=cut
+#=cut
         next LINE if $line !~ m{ \A \s* Statistics \s+ }xms;
 
         my $passage = $line;
@@ -958,7 +1040,7 @@ sub get_seq_ids {
     my $n_records;
 
     open my $fh, '<', $text_page;
-=pod
+#=pod
 
     Example content:
 ....
@@ -1014,7 +1096,7 @@ Note that one of the records above has 9 sequence IDs (only the first of which
 is hyperlinked).
 
 The end of the table on the page is indicated by the 'Top' link.
-=cut
+#=cut
 
     LINE:
     while (defined (my $line = <$fh>)) {
@@ -1049,7 +1131,7 @@ print STDERR qq{\@ids_of_record:\n}, Dumper \@ids_of_record;
             };
             next LINE if !$class;
 
-=pod
+#=pod
             this represents a record line; examples (see above) are:
 
     SOR_0343   [2084]Streptococcus oralis Uo5 [2085]CBZ00029.1
@@ -1087,7 +1169,7 @@ print STDERR qq{\@ids_of_record:\n}, Dumper \@ids_of_record;
     UniProt or PDB/3D column actually always contains a non-breaking space
     (i.e. '&nbsp;').
 
-=cut
+#=cut
 #            pos $line = 0;
 #            my @fields_with_link;
 #            while ( $line =~ m{ \G !(?:\[\d+\]) }gcxms
