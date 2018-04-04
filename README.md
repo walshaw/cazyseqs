@@ -23,7 +23,7 @@ The fields of each record, shown as columns, are as follows; in effect, the desc
 below supplement the information at http://www.cazy.org/Help.html , which does not
 provide a full explanation of all of the content of the records.
 
-*. Protein Name
+* Protein Name
 
  In fact, this strings appear to be gene locus names. (See below for confirmation of
  this in one example). However, it appears that records which have a non-blank PDB/3D
@@ -36,13 +36,13 @@ provide a full explanation of all of the content of the records.
  this record appear normal (for reference, respectively "bacterium enrichment culture
  clone g13" and "AEP84398.1".
 
-*. EC#
+* EC#
 
  For some (many? all?) families, all the records have a blank EC# field. It is unclear
  to me why the EC# is record (protein) specific, rather than specific to an entire
  family; but this may depend on the depth of the classification used.
 
-*. Organism
+* Organism
 
  Appears to be always present (even if it is "uncultured organism" or "unidentified" etc).
 
@@ -50,7 +50,7 @@ provide a full explanation of all of the content of the records.
  page pertaining to the organism. In some cases, it is a link to an NCBI taxonomy
  page (e.g. the oddly-named "ORF" record above").
 
-*. GenBank
+* GenBank
 
  This usually seems to be present; specifies one or more identifiers. These are generally the
  IDs in the NCBI-GenBank protein database ('GenPept'). In some cases, there is an
@@ -87,11 +87,11 @@ provide a full explanation of all of the content of the records.
 
  Note that there is no mention of these RefSeq-style IDs in http://www.cazy.org/Help.html .
 
-*. UniProt
+* UniProt
 
  Usually absent, but it may depend on the family.
 
-*. PDB/3D
+* PDB/3D
 
  Again this will often be absent for a given record. Where present, it specifies the
  4-letter PDB code followed immediately by the protein chain(s) to which this protein
@@ -113,17 +113,17 @@ For the GH95 family at any rate, these subsets are 'Archaea', 'Bacteria', 'Eukar
 'unclassified', 'Structure', 'Characterized'. The superset is 'All', which is shown
 by default. Each page is accessed via tabs which link to URLs of the form:
 
-http://www.cazy.org/__familyID_____setname__.html
+http://www.cazy.org/**familyID**_**setname**.html
 
 e.g.
 
-*. http://www.cazy.org/GH95_all.html
-*. http://www.cazy.org/GH95_bacteria.html
+* http://www.cazy.org/GH95_all.html
+* http://www.cazy.org/GH95_bacteria.html
 
 __setname__ in this context is always in lower case (c.f. the strings on the tabs,
 stated above).
 
-Oddly, the pagination is quite different for these different sets (see below).
+Notably, the pagination is quite different for these different sets (see below).
 
 ### Pagination of each (sub)set
 
@@ -168,8 +168,12 @@ results in a layout identical to the default for the All set, i.e. only
 (However, the above 'meddled with' URL does produce a different format
 link in the tabs, e.g.
  http://www.cazy.org/GH95_all.html?debut_TAXO=100&debut_PRINC=1000#pagination_PRINC 
-- but best not to go there.)
+ -but it's best not to go there.)
 
+Refer to the inline manual (./cazyseqs.pl -man) or see the MANUAL file,
+for further information.
+
+John Walshaw.
 
 
 
