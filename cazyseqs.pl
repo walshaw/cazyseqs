@@ -25,9 +25,11 @@ my $suffix; # can be directly user-specified; but if not, then a default value
             # is derived from $category (which can also be user-respecified)
 
 my @expected_categories = ($category, # this WON'T be user-respecified
-  qw(Archaea Bacteria Eukaryota Viruses Structure Characterized));
+  qw(Archaea Bacteria Eukaryota Viruses Structure Characterized unclassified));
 
 my $browser = qq{wget -O -}; # alternative might be e.g. qq{lynx -source -dump -width=1024};
+
+###my $browser_no_source = qq{lynx -dump -width=1024};
 
 my $records_per_page = 1000; # seems to be the default for the CAZy website's
                              # 'PRINC' format, which is what you get by
@@ -44,7 +46,22 @@ my $use_table   = 2; # table-numbering in this context starts at 1!
 my $title_row_id = q{line_titre};
 my $title_row_class = q{royaume};
 my $ignore_rows = 0; # specifies N: ignore the first N rows of that table
-my $use_column  = 1; # column-numbering also starts at 1 in this context
+# This specifies the NCBI protein IDs column:
+my $use_column  = 4; # column-numbering also starts at 1 in this context
+
+my @retrieval_types = qw( id url sequence );
+my $retrieve = q{id};
+
+my $url_prefix = q{};
+my $url_suffix = q{};
+my $use_ncbi_urls; # boolean; mutually exclusive wrt above 2 vars
+# these don't work... (they do using a GUI browser though)
+#my $ncbi_prefix = q{https://www.ncbi.nlm.nih.gov/protein/};
+#my $ncbi_suffix = q{?report=fasta&log$=seqview&format=text};
+my $ncbi_prefix = q{https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&id=};
+my $ncbi_suffix = q{&rettype=fasta&retmode=text};
+
+# see https://www.ncbi.nlm.nih.gov/books/NBK25499/#chapter4.EFetch
 
 =pod
     these are for specifying the 'header' part of the CAZy family page,
@@ -92,12 +109,22 @@ my $table_index  = 0;
 my $row_index    = 0;
 my $column_index = 0;
 
+my @content_ids;  # the IDs harvested from the table data
+my @content_urls; # the URLs *harvested from the table data*; there is not
+		  # necessarily one explicit URL per explicit ID.
+
+# These relate to 'sociability' regarding use of the NCBI Entrez resource
+my $pause_between_items   =   1; # sleep time in seconds
+my $pause_between_batches = 300; # ditto; but only after each batch has downloaded
+my $batch_size            = 100; # number of items
+# 'items' means sequence records
+
 my $verbosity = 0;
 my $show_usage;
 my $show_help;
 my $show_manual;
 
-my $example_web_page = qq{GH33_$default_suffix};
+my $example_web_page = qq{GH33$default_suffix};
 my $example_url = qq{http://$host/$example_web_page};
 
 my $usage = qq{Usage:\n$0 [ options ] [ -cazyid ] CAZyID [ PAGESDIR ]};
@@ -108,6 +135,8 @@ my $help = qq{$usage
 	-cazyid		STRING
 	-outdir		STRING
         -category	STRING
+        -get		STRING 
+	-ncbiurls
 	-force
         -verbosity	INTEGER
 	-usage
@@ -121,11 +150,16 @@ Advanced options:
 	-ignoretitle	STRING
 	-ignorerows	INTEGER
 	-columnindex	INTEGER
+	-urlprefix	STRING
+	-urlsuffix	STRING
 	-browser	STRING
 	-wwwhost	STRING
 	-suffix		STRING
 	-pagesize	INTEGER
 	-context	STRING
+	-pause		INTEGER
+	-bigpause	INTEGER
+	-batchsize	INTEGER
 
 };
 
@@ -147,9 +181,39 @@ my $man = qq{$usage
 				here, so if they are absent they will be
 				downloaded here first (see -force).
 
-        -category	STRING	The category of sequences whose IDs (and
+	-category	STRING	The category of sequences whose IDs (and
 				possibly sequence records too) to download.
 				This is expected to be one of:
+				'All', 'Archaea', 'Bacteria', 'Eukaryota',
+				'Viruses', 'Structure', 'Characterized'.
+				Default is '$category'.
+
+	-get		STRING	Data to output: either 'id', 'url', or
+				'sequence' (can be pluralised); determines the
+				results sent to standard output, i.e. sequence
+				ID strings only (as retrieved from the data
+				column - see -columnindex); or URLs obtained
+				from the same column (but see -urlprefix and
+				-urlsuffix); or the sequence data (obtained by
+				using the URLs).
+				The names can also be abbreviated, e.g. 'seq'.
+				Default is '$retrieve'.
+				N.B. the resulting data is *always sent to
+				standard output*; so to save this in a file,
+				please redirect (e.g. '> myfile.fasta' ). Note
+				that other output (progress commentary etc.)
+				is sent to a different stream (standard error)
+				so to save that, redirect to a different file
+				(e.g. '2> getseqs.log').
+
+	-ncbiurls		Same as specifying:
+				-urlprefix $ncbi_prefix
+				-urlsuffix '$ncbi_suffix'
+				(note the quotes around the suffix, because it
+				contains '&' characters).
+				The underlying API used is the Entrez E-utils;
+				in this case, using Efetch; see:
+				https://www.ncbi.nlm.nih.gov/books/NBK25499/#chapter4.EFetch
 
 	-force			If specified, then an attempt will always be
 				made to download the webpages to the output dir
@@ -218,14 +282,32 @@ Advanced options:
 				the title row will be ignored.
 
 	-columnindex	INTEGER	The number of the column from which to extract
-				data. Default is column $use_column.
+				data. Default is column $use_column. If you
+				change this, you are advised to not use
+				-ncbiurls (see above).
+
+	-urlprefix	STRING	If '-get url' is specified then by default,
+				the URLs stated explicitly in the data table
+				will be used. However, use of -urlprefix and/
+				or -urlsuffix can override that, and the
+				strings specified will be prepended/appended
+				to the sequence ID string, to form the URL in
+				each case. This can cause *more* URLs to be
+				generated, because the number of explicit
+				URLs in the data tables may be fewer than the
+				number of sequence IDs listed, possibly due to
+				redundancy.
+				See also -ncbiurls, above.
+
+	-urlsuffix	STRING	See -urlprefix, above.
+				
 
 	-browser	STRING	This should be the full command-line prefix of
 				the command to fetch each page. A single
 				argument is appended, i.e. the URL of each
 				page. Default is $browser.
 				So for example, a command-line would be:
-				$browser $out_pages_dir/$example_url
+				$browser $out_pages_dir/$example_web_page
 
 	-wwwhost	STRING	Web host name. Default is $host
 
@@ -262,6 +344,24 @@ Advanced options:
 				Default is $page_context . These also seem to
 				correspond to different numbers of records per
 				page (respectively 100 and 1000).
+
+	-pause		INTEGER	Refer to 'Fair usage guidelines' below. This
+				is relevant only to '-get sequence'.
+				Pause in seconds which occurs after each
+				sequence record has been downloaded.
+				Default: $pause_between_items 
+
+	-bigpause	INTEGER	Refer to 'Fair usage guidelines' below. This
+				is relevant only to '-get sequence'.
+				Pause in seconds which occurs after each batch
+				of sequence records has been downloaded.
+				Default: $pause_between_batches
+
+	-batchsize	INTEGER	Refer to 'Fair usage guidelines' below. This
+				is relevant only to '-get sequence'.
+				Number of sequence records per batch.
+				Default: $batch_size
+
 
 Pagination
 
@@ -306,6 +406,54 @@ By default, the script assumes 'All' is required, and so the value of
 -pagesize is by default 1000. This can be changed (e.g. to 100, if the style
 is TAXO) by using -pagesize.
 
+
+Fair usage guidelines
+
+The principal protein IDs/Accessions used by CAZy are those of the NCBI
+protein database. By default, this script will use those IDs (see
+-columnindex), and so will either extract those IDs from the CAZy web pages
+(-get id); *or* extract the original URLs (-get url , as long as none of
+-urlprefix, -urlsuffix or -ncbiurls are used); or, if -get url and any of
+-urlprefix, -urlsuffix or -ncbiurls *are* used, then a URL will be constructed
+for each sequence ID. In all these cases, only the CAZy website will be
+interrogated (or simply the local copies of the relevant pages, if they
+exist and -force is not used).
+
+In contrast, -get seq will interrogate a third-party website, to retrieve the
+sequence records. If there are thousands of sequence records to retrieve, then
+the immediate downloading of all of these serially would risk breaching the
+fair usage guidelines (of the NCBI for example, but it depends on -columnindex,
+-urlprefix, -urlsuffix and -ncbiurls - you can direct the script to retrieve
+them from somewhere else if available, for example a local copy of the protein
+database, if one exists).
+
+Please refer to "Guidelines for Scripting Calls to NCBI Servers" at
+https://www.ncbi.nlm.nih.gov/home/about/policies/
+
+Also refer to "Frequency, Timing and Registration of E-utility URL Requests"
+at https://www.ncbi.nlm.nih.gov/books/NBK25497/#_chapter2_Usage_Guidelines_and_Requiremen_
+- an extract follows:
+
+	"In order not to overload the E-utility servers, NCBI recommends that
+	 users post no more than three URL requests per second and limit large
+	 jobs to either weekends or between 9:00 PM and 5:00 AM Eastern time
+	 during weekdays. Failure to comply with this policy may result in an
+	 IP address being blocked from accessing NCBI. If NCBI blocks an IP
+	 address, service will not be restored unless the developers of the
+	 software accessing the E-utilities register values of the tool and
+	 email parameters with NCBI."
+
+etc.
+
+*** PLEASE NOTE THE ABOVE WARNING ABOUT IP ADDRESSES BEING BLOCKED! ***
+
+The script will help to make any large downloads more "polite". Of course, an
+alternative is to simply extract the IDs instead (-get id, i.e. the default)
+and then use these as input to batch Entrez retrieval
+(https://www.ncbi.nlm.nih.gov/sites/batchentrez).
+
+See 
+
 };
 
 
@@ -313,6 +461,7 @@ croak "$usage_plus" if !GetOptions(
     "cazyid=s"		=> \$cazy_id         ,
     "outdir=s"		=> \$out_pages_dir   ,
     "category=s"	=> \$category        ,
+    "get=s"             => \$retrieve        ,
     "force"		=> \$clobber         ,
     "verbosity=i"	=> \$verbosity       ,
     "usage"		=> \$show_usage      ,
@@ -323,6 +472,9 @@ croak "$usage_plus" if !GetOptions(
     "ignoretitle=s"	=> \$title_row_class ,
     "ignorerows=i"	=> \$ignore_rows     ,
     "columnindex=i"	=> \$use_column      ,
+    "urlprefix=s"	=> \$url_prefix      ,
+    "urlsuffix=s"	=> \$url_suffix      ,
+    "ncbiurls"		=> \$use_ncbi_urls   ,
     "browser=s"		=> \$browser         ,
     "wwwhost=s"		=> \$host            ,
     "suffix=s"		=> \$suffix          ,
@@ -338,6 +490,10 @@ $show_usage  && do { print $usage_plus; exit 0; };
 
 $cazy_id ||= shift or croak $usage_plus;
 
+my $extra = shift;
+
+$out_pages_dir = $extra if $extra;
+
 my $capital   = uc(substr $category, 0, 1);
 my $remainder = lc(substr $category, 1   );
 
@@ -348,6 +504,23 @@ if (($category =~ s{ \A [a-z] .* \z }{${capital}$remainder}xms) ||
 
 print STDERR qq{WARNING: '$category' is not a known category - so this will probably fail\n}
   if !first { $_ eq $category } @expected_categories;
+
+(my $retrieval = lc $retrieve) =~ s{ s \z }{}xms;
+
+# so for example, 'seqs' is ok because 'sequences' =~ m{ \A seq }
+
+my $retrieve_type = first { m{ \A $retrieval }xms } @retrieval_types;
+
+croak qq{unrecognized data retrieval type '$retrieve'}
+    if !defined $retrieve_type;
+
+croak qq{Use either: one or both of -urlprefix, -urlsuffix; OR -ncbiurls; not both.}
+    if $use_ncbi_urls && ($url_prefix || $url_suffix);
+
+if ($use_ncbi_urls) {
+    $url_prefix = $ncbi_prefix;
+    $url_suffix = $ncbi_suffix;
+}
 
 # Note that $category may now have a non-default value, due to user-spec
 my $category_lc = lc $category;
@@ -365,7 +538,7 @@ my $category_url0  = $url_root.$suffix; # full URL of 1st page of req'd category
 
 my $category_page0 = ${cazy_id}.q{_}.$category_lc.$ext;
 
-print qq{Summary of pagination parameters - check the manual (use -man) if you are unsure:
+print STDERR qq{Summary of pagination parameters - check the manual (use -man) if you are unsure:
 
 	category:		$category
 	records per page:	$records_per_page
@@ -426,13 +599,13 @@ my @unretrieved_cat;
 for my $cat (@expected_categories) {
 
     if (!exists $seqs_per_category_href->{$cat}) {
-        print qq{NO SEQUENCE TOTAL RETRIEVED FOR CATEGORY '$cat'\n};
+        print STDERR qq{NO SEQUENCE TOTAL RETRIEVED FOR CATEGORY '$cat'\n};
         push @unretrieved_cat, $cat;
         next;
     }
 
-    printf qq{category %-20s : %6d sequence}, $cat, $seqs_per_category_href->{$cat};
-    print qq{}, ($seqs_per_category_href->{$cat} == 1) ? qq{} : qq{s}, qq{\n};
+    printf STDERR qq{category %-20s : %6d sequence}, $cat, $seqs_per_category_href->{$cat};
+    print STDERR qq{}, ($seqs_per_category_href->{$cat} == 1) ? qq{} : qq{s}, qq{\n};
 }
 
 my @unexpected_cat = grep {
@@ -442,7 +615,7 @@ my @unexpected_cat = grep {
 
 if (@unexpected_cat) {
 
-    print qq{THESE UNEXPECTED CATEGORIES WERE FOUND IN THE WEB PAGE:\n\t},
+    print STDERR qq{THESE UNEXPECTED CATEGORIES WERE FOUND IN THE WEB PAGE:\n\t},
         join(qq{\n\t}, @unexpected_cat), qq{\n\n};
 
 }
@@ -458,6 +631,16 @@ parse_pages(
         outdir           => $out_pages_dir   ,
         clobber          => $clobber         ,
         get_command      => $browser         ,
+);
+
+output_results(
+    sequence_ids  => \@content_ids         ,
+    original_urls => \@content_urls        ,
+    url_prefix    => $url_prefix           ,
+    retrieve_type => $retrieve_type        ,
+    batch_size    => $batch_size           ,
+    pause_records => $pause_between_items  ,
+    pause_batches => $pause_between_batches,
 );
 
 exit 1;
@@ -535,7 +718,7 @@ sub get_cat_stats {
     $local_file = qq{$arg{outdir}/$arg{outfile}}
       if $local_file && $arg{outdir};
 
-    
+
     my ($open_expr, $mode, $ofh) = fetch_read_write(
         local_file  => $local_file      , clobber => $clobber ,
         get_command => $arg{get_command}, url     => $arg{url},
@@ -736,9 +919,9 @@ sub start_dsectn {
             }
 
             # risky postfix '++' in a print statement...
-            print STDERR qq{\t}, ($in_data_rows++) ? qq{next} : qq{first},
+            print STDERR qq{\t}, ($in_data_rows) ? qq{next} : qq{first},
                   qq{ data row found ($in_data_rows)\n} if $verbosity > 1;
-            #$in_data_rows++; # this actually keeps a count of how many data rows
+            $in_data_rows++; # this actually keeps a count of how many data rows
             last TAGNAME;
         };
 
@@ -765,12 +948,19 @@ sub start_dsectn {
                 last TAGNAME;
             }
 
-            print STDERR qq{\t\tfound data cell ($tagname)\n};
+            print STDERR qq{\t\tfound data cell ($tagname)\n} if $verbosity > 1;
             last TAGNAME;
         };
 
         (lc $tagname eq lc $anchor_tag) && do {
             return if !$in_data_table || !$in_data_rows || !$in_data_columns;
+            if (defined $attr_href->{href}) {
+                push @content_urls, $attr_href->{href};
+            }
+            else {
+                print STDERR qq{WARNING: anchor in data cell contains no HREF\n};
+            }
+            last TAGNAME if $verbosity < 2;
             print STDERR qq{\t\t\trequired data cell contains anchor: };
             print STDERR qq{\t\t\t\t$_ = $attr_href->{$_}\n}
                 for (keys %{$attr_href});
@@ -778,6 +968,10 @@ sub start_dsectn {
         };
 
     } # TAGNAME end
+
+    # Any actions that should be taken after opening *any data-related tag*
+    # should be placed here; note that non data-related tags won't get this
+    # far (due to 'return' instead of 'last' above)
 
 #    print qq{found $tagname\n} # with $stats_attr_name == "$stats_attr_value"\n}
 #      if $verbosity > 1;
@@ -818,6 +1012,11 @@ sub end_dsectn {
 
         (lc $tagname eq lc $cell_tag) && do {
             return if !$in_data_table || !$in_data_rows || !$in_data_columns;
+            print STDERR qq{  end data cell ($cell_tag)\n} if $verbosity > 1;
+            # best to explicitly set status to 'not in a data column' lest
+            # additional pieces of *text* occur *after* this cell (and would be
+            # therefore treated as if they are part of a data column)
+            undef $in_data_columns;
             $padding = qq{\t\t};
             last TAGNAME;
         };
@@ -845,7 +1044,10 @@ sub text_dsectn {
 
     return if !$in_data_columns;
 
-    print STDERR qq{DATA: '$content_text'\n};
+    print STDERR qq{\t} x 6, qq{DATA: '$content_text'\n} if $verbosity > 1;
+
+    push @content_ids, $content_text;
+
 }
 
 ##----------------------------------------------------------
@@ -943,6 +1145,71 @@ sub parse_single_page {
     $parser->eof();
 
     print STDERR qq{closing: $open_expr\n};
+
+}
+
+sub output_results {
+
+    my %arg = @_;
+
+    my $ids_lref      = $arg{sequence_ids} ;
+    my $urls_lref     = $arg{original_urls};
+    my $url_prefix    = $arg{url_prefix}   ;
+    my $retrieve_type = $arg{retrieve_type};
+    my $batch_size    = $arg{batch_size};
+    my $pause_record  = $arg{pause_records};
+    my $pause_batch   = $arg{pause_batches};
+
+    my @seq_ids = @{$ids_lref};
+    my @urls    = @{$urls_lref};
+    my $n_urls  = @urls;
+
+    print STDERR scalar @seq_ids, qq{ sequence IDs retrieved; },
+                 qq{$n_urls original URLs retrieved\n};
+
+    my $url_type = qq{(original)};
+
+    print STDERR qq{Retrieving ${retrieve_type}s};
+
+
+    SHOW_DATA: {
+
+        ($retrieve_type eq 'id') && do {
+            print join(qq{\n}, @seq_ids), qq{\n};
+            last SHOW_DATA;
+        };
+
+        ($url_prefix || $url_suffix) && do {
+            $url_type = qq{derived from prepending '$url_prefix' and appending '$url_suffix') to sequence IDs\n};
+            @urls = map { $url_prefix . $_ . $url_suffix } @seq_ids;
+            my $n_urls = @urls;
+        };
+
+        ($retrieve_type eq 'url') && do {
+            print STDERR qq{ $url_type};
+            print join(qq{\n}, @urls), qq{\n};
+            last SHOW_DATA;
+        };
+
+        ($retrieve_type eq 'sequence') && do {
+            print STDERR qq{ obtained from URLS $url_type};
+            my $n_downloads = 0;
+            for my $url (@urls) {
+                my $get_to_stdout = qq{$browser '$url'};
+                print STDERR qq{$get_to_stdout\n};
+                system $get_to_stdout;
+                # this to avoid pauses if there's nothing left to follow
+		next if (++$n_downloads == $n_urls); # should immediately terminate
+                sleep $pause_record;
+                next if $n_downloads % $batch_size;
+                print STDERR qq{pausing for $pause_batch seconds\n};
+                sleep $pause_batch;
+            }
+            last SHOW_DATA;
+        };
+    }# end SHOW_DATA
+
+    print STDERR qq{\n};
 
 }
 
