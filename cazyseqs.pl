@@ -29,8 +29,6 @@ my @expected_categories = ($category, # this WON'T be user-respecified
 
 my $browser = qq{wget -O -}; # alternative might be e.g. qq{lynx -source -dump -width=1024};
 
-###my $browser_no_source = qq{lynx -dump -width=1024};
-
 my $records_per_page = 1000; # seems to be the default for the CAZy website's
                              # 'PRINC' format, which is what you get by
                              # default in the <CAZyID>_all.html page
@@ -643,7 +641,7 @@ output_results(
     pause_batches => $pause_between_batches,
 );
 
-exit 1;
+exit 0;
 
 sub fetch_read_write {
 
@@ -743,10 +741,6 @@ sub get_cat_stats {
     # Note that GTHML::Parser->parse() won't play ball with this form:
     # $parser->parse(<$fh>); so read line-by-line
 
-# These have now been made global:
-#    my $get_text; # boolean
-#    my @text_items;
-
     while (defined (my $line = <$fh>)) {
         #print qq{LINE: $line};
         $parser->parse($line);
@@ -779,7 +773,7 @@ sub get_cat_stats {
 sub start_hsectn {
 
     my ($tagname, $attr_href) = @_;
-###print qq{start_hsectn($tagname, $attr_href); looking for $stats_tag\n};
+
     return if $tagname ne $stats_tag;
     return if !defined $attr_href->{$stats_attr_name};
     return if $attr_href->{$stats_attr_name} ne $stats_attr_value;
@@ -792,7 +786,6 @@ sub start_hsectn {
 sub end_hsectn {
 
     my ($tagname) = @_;
-###print qq{end_hsectn()\n};
     return if $tagname ne $stats_tag;
     return if !$get_text;
     print STDERR qq{closing parsed $tagname\n}
@@ -803,7 +796,6 @@ sub end_hsectn {
 sub text_hsectn {
 
     my ($content_text) = @_;
-###print qq{text_hsectn()\n};
 
     return if !$get_text;
 
@@ -811,7 +803,7 @@ sub text_hsectn {
     print STDERR qq{\tfound text: '$content_text'\n}
       if $verbosity > 1;
 }
-#}
+
 
 sub data_related_tag {
 
@@ -827,7 +819,7 @@ sub data_related_tag {
 sub start_dsectn {
 
     my ($tagname, $attr_href) = @_;
-###print qq{start_hsectn($tagname, $attr_href); looking for $stats_tag\n};
+
     if ($verbosity > 2) {
         print STDERR qq{found tag: $tagname\n};
         print STDERR qq{\tinside data table: },
@@ -903,7 +895,7 @@ sub start_dsectn {
                 undef $in_data_rows;
                 last TAGNAME; # or return ?
             }
-###print Dumper($attr_href);
+
             # ignore title rows
             if (
             # yep, it's inconsistent; attr name is hardcoded here (c.f. above)
@@ -918,7 +910,6 @@ sub start_dsectn {
                last TAGNAME;
             }
 
-            # risky postfix '++' in a print statement...
             print STDERR qq{\t}, ($in_data_rows) ? qq{next} : qq{first},
                   qq{ data row found ($in_data_rows)\n} if $verbosity > 1;
             $in_data_rows++; # this actually keeps a count of how many data rows
@@ -973,9 +964,6 @@ sub start_dsectn {
     # should be placed here; note that non data-related tags won't get this
     # far (due to 'return' instead of 'last' above)
 
-#    print qq{found $tagname\n} # with $stats_attr_name == "$stats_attr_value"\n}
-#      if $verbosity > 1;
-###    $get_text++; # ought to only ever reach a max of 1
 }
 
 sub end_dsectn {
@@ -1050,9 +1038,6 @@ sub text_dsectn {
 
 }
 
-##----------------------------------------------------------
-exit 0;
-
 sub parse_pages {
 
     my %arg = @_;
@@ -1076,8 +1061,6 @@ sub parse_pages {
 
 
     for my $page ( 0 .. $n_pages - 1) {
-###    my $outfile = qq{${cazy_id}_$page.html};
-###    my $outpath = qq{$out_pages_dir/$outfile};
 
         my $local_file = $first_file if defined $first_file;
 
@@ -1099,7 +1082,6 @@ sub parse_pages {
                      (defined $ofh) ?  qq{, $ofh} : qq{},
                      qq{\n} if $verbosity > 1;
         parse_single_page($open_expr, $mode, $ofh);
-        ###print qq{get_seq_ids($outpath)\n};
     }
 }
 
@@ -1124,15 +1106,9 @@ sub parse_single_page {
 
     print STDERR qq{opening: $open_expr\n};
     open(my $fh, $mode, $open_expr);
-    # should be easily small enough to be slurp-safe
-    #my @summary_content = <$fh>;
 
     # Note that GTHML::Parser->parse() won't play ball with this form:
     # $parser->parse(<$fh>); so read line-by-line
-
-# These have now been made global:
-#    my $get_text; # boolean
-#    my @text_items;
 
     while (defined (my $line = <$fh>)) {
         #print qq{LINE: $line};
@@ -1211,280 +1187,6 @@ sub output_results {
 
     print STDERR qq{\n};
 
-}
-
-=pod
-
-    None of this gets executed, nor subroutines called by anything above...
-
-my $default_url = qq{http://$host/${cazy_id}$suffix};
-my $get_first_page = qq{$browser $default_url};
-
-my $outfile0 = qq{${cazy_id}_0.html};
-my $outpath0 = qq{$out_pages_dir/$outfile0};
-
-my $command_first = qq{$get_first_page > $outpath0}; # assuming single-digit sufficient...
-
-print STDERR qq{$command_first\n};
-`$command_first` if ! -f $outpath0;
-
-my $n_records_to_get = get_total($outpath0);
-my $n_pages = int($n_records_to_get / $records_per_page) + 1; 
-
-my @seq_ids;
-
-for my $page ( 0 .. $n_pages - 1) {
-    my $outfile = qq{${cazy_id}_$page.html};
-    my $outpath = qq{$out_pages_dir/$outfile};
-    if ($page) {
-        my $url = $default_url; 
-        $url .= qq{?debut_$page_context=} . $page * $records_per_page . qq{#pagination_$page_context};
-        my $command = qq{$browser $url > $outpath};
-        print STDERR qq{$command\n};
-        `$command` if ! -f $outpath;
-    }
-    print STDERR qq{get_seq_ids($outpath)\n};
-}
-
-exit 0;
-
-sub get_total {
-
-    my $text_page = shift;
-    my $total_records;
-
-    open my $fh, '<', $text_page;
-    LINE:
-    while (defined (my $line = <$fh>)) {
-
-#=pod
-    a sanity check involving an arbitrary number of lines; e.g. a typical
-    arrangement is:
-
-...
-...
-   Statistics                    GenBank accession (1453); Uniprot accession (226); PDB accession (6); 3D entries (3); cryst (0)
-   [19]Summary
-   [20]All (1392) [21]Archaea (3) [22]Bacteria (1343) [23]Eukaryota (40) [24]unclassified (6) [25]Structure (3) [26]Characterized (8)
-   < | 1 | [27]2 | [28]>
-...
-...
-    where the final line above is the menu of pages; however, all that's
-    really needed is the number in parentheses following the 'All' string
-    (third line above). But the 'Statistics', 'Summary' and 'All' lines
-    are explicitly checked for occurrence.
-#=cut
-        next LINE if $line !~ m{ \A \s* Statistics \s+ }xms;
-
-        my $passage = $line;
-        my $next_line = <$fh>;
-        $passage .= $next_line;
-        croak qq{unexpected format in file $text_page:\n...\n$passage\n}
-          if $next_line !~ m{ \A \s* \[ \d+ \] Summary \s }xms;
-
-        $next_line = <$fh>;
-        $passage .= $next_line;
-        croak qq{unexpected format in file $text_page:\n...\n$passage\n}
-          if $next_line !~ m{ \A \s* \[ \d+ \] All \s* [(](\d+)[)] \s }xms;
-
-        $total_records = $1;
-        ### insert further parsing/sanity-checking here, if required
-        last LINE;
-    }
-    return $total_records;
-}
-
-sub get_seq_ids {
-
-    my $text_page = shift;
-    print STDERR qq{extracting sequence IDs from $text_page\n};
-
-    my $class;
-    my %records_in_class; # elements are array refs; each element of the
-                          # arrays represents a single sequence ID
-    my @ids_of_record; # used to store multiple IDs for the current record
-
-    my $n_records;
-
-    open my $fh, '<', $text_page;
-#=pod
-
-    Example content:
-....
-   Statistics                    GenBank accession (1453); Uniprot accession (226); PDB accession (6); 3D entries (3); cryst (0)
-   [19]Summary
-   [20]All (1392) [21]Archaea (3) [22]Bacteria (1343) [23]Eukaryota (40) [24]unclassified (6) [25]Structure (3) [26]Characterized (8)
-   < | 1 | [27]2 | [28]>
-   Archaea
-   Protein Name EC# Organism GenBank Uniprot PDB/3D
-    Halxa_0483   [29]Halopiger xanaduensis SH-6 [30]AEH39084.1
-    HTIA_2443   [31]Halorhabdus tiamatea SARL4B type strain: SARL4B [32]CCQ34551.1
-    Huta_2700   [33]Halorhabdus utahensis DSM 12940 [34]ACV12861.1 [35]C7NQD5
-   Bacteria
-   Protein Name EC# Organism GenBank Uniprot PDB/3D
-    LuPra_01786   [36]Acidobacteria bacterium DSM 100886 [37]AMY08582.1
-    AHOG_11850   [38]Actinoalloteichus hoggarensis DSM 45943 [39]ASO20013.1
-    AHOG_16195   [40]Actinoalloteichus hoggarensis DSM 45943 [41]ASO20865.1
-    TL08_13400   [42]Actinoalloteichus hymeniacidonis HPA177(T) (=DSM 45092(T)) [43]AOS63494.1
-    UA74_18230   [44]Actinoalloteichus sp. ADI127-7 [45]APU15674.1
-    UA74_12580   [46]Actinoalloteichus sp. ADI127-7 [47]APU14576.1
-    C1701_23000   [48]Actinoalloteichus sp. AHMU CJ021 [49]AUS80736.1
-....
-....
-    SOR_0343   [2084]Streptococcus oralis Uo5 [2085]CBZ00029.1
-    Sequence 3214 from patent US 6699703   [2086]Streptococcus pneumoniae [2087]AAT15844.1
-   AAW09246.1
-   ABI03175.1
-   ABI08216.1
-   ABJ31732.1
-   ABJ49345.1
-   ABL17088.1
-   ACK13634.1
-   ACW44353.1
-    BUM80_05795   [2088]Streptococcus pneumoniae 11A [2089]AUC45907.1
-    BUM80_08585   [2090]Streptococcus pneumoniae 11A [2091]AUC46367.1
-....
-....
-    BOC72_01499   [2212]Streptococcus pneumoniae SP64 [2213]APJ35011.1
-    BOC72_02052   [2214]Streptococcus pneumoniae SP64 [2215]APJ35502.1
-    SPN034156_09850   [2216]Streptococcus pneumoniae SPN034156 SNP034156 [2217]CCP36654.1
-   [2218]Top
-   Last update: 2018-03-13 Â© Copyright 1998-2018
-   [2219]AFMB - CNRS - UniversitÃ© d'Aix-Marseille
-
-References
-
-   1. http://www.cazy.org/spip.php?page=backend
-   2. http://www.cazy.org/Welcome-to-the-Carbohydrate-Active.html
-....
-....
-etc.
-Note that one of the records above has 9 sequence IDs (only the first of which
-is hyperlinked).
-
-The end of the table on the page is indicated by the 'Top' link.
-#=cut
-
-    LINE:
-    while (defined (my $line = <$fh>)) {
-        FORMAT: {
-            ($line =~ m{ \A \s* ( Archaea | Bacteria |
-                              Eukaryota | unclassified ) \s* \z }xms) && do {
-                my $new_class = $1;
-print STDERR qq{** $new_class **\n};
-                # deal with previous record, if there is one
-print STDERR qq{\@ids_of_record:\n}, Dumper \@ids_of_record;
-                # @ids_of_record will change in a moment, so a ref to it cannot
-                # safely be added to the list; so make a copy, and add a ref
-                # to that instead
-                my @this_record_ids = @ids_of_record;
-                push @{$records_in_class{$class}}, \@this_record_ids
-                   if (@ids_of_record);
-                undef @ids_of_record;
-
-                $class = $new_class;
-
-                my $next_line = <$fh>;
-                croak qq{expecting 'Protein Name ...' line: }.
-                      qq{unexpected format in $text_page:\n${line}$next_line\n}
-                  if $next_line !~ m{ \A \s* Protein \s Name \s EC[#] \s Organism
-                                 \s GenBank \s Uniprot \s PDB[/]3D \s* \n? \z}xms;
-                undef @ids_of_record;
-                last FORMAT;
-            };
-            ($line =~ m{ \A \s* \[ \d+ \] Top \s* \n? \z }xms) && do {
-                # it's the end of table
-                last LINE;
-            };
-            next LINE if !$class;
-
-#=pod
-            this represents a record line; examples (see above) are:
-
-    SOR_0343   [2084]Streptococcus oralis Uo5 [2085]CBZ00029.1
-
-    Sequence 3214 from patent US 6699703   [2086]Streptococcus pneumoniae [2087]AAT15844.1
-   AAW09246.1
-   ABI03175.1
-
-   Huta_2700   [33]Halorhabdus utahensis DSM 12940 [34]ACV12861.1 [35]C7NQD5
-
-    - i.e. that's 3 records; the first has 1 sequence ID, the second has 3
-    (actually it's really 9 for this record, but the above is illustrative).
-    The third record has a non-blank UniProt field (unlike the other 2).
-
-    Therefore, a 'one-field' line is assumed to be a continuation of the
-    previous line.
-
-    The first line of a record is assumed to have a minimum of 3 non-
-    whitespace fields, because it has a minimum of 3 columns (but the second,
-    i.e. Organism, can often, and will usually, contain whitespace.
-    Note, it can be assumed that in the first row of a record, all the fields
-    from the Organism onwards, which are non-blank, will begin with a link
-    (shown as the [..] placeholders containing the link index).
-
-    An alternative to this would be to use HTML::Parser, because the source
-    of the CAZy pages shows that all empty cells are coded explicitly (which
-    would not be the only way of doing it; e.g. multi-column spanning cells
-    would be another way, which would make parsing more fiddly). So using
-    HTML::Parser would be relatively straightforward; but possibly still
-    more involved than the way implemented here.
-
-    Note also that (as is evident only by looking at the HTML source of the
-    web pages), every row appears to end with an empty column; i.e. after
-    the PDB/3D column. This is always literally empty, whereas an empty
-    UniProt or PDB/3D column actually always contains a non-breaking space
-    (i.e. '&nbsp;').
-
-#=cut
-#            pos $line = 0;
-#            my @fields_with_link;
-#            while ( $line =~ m{ \G !(?:\[\d+\]) }gcxms
-             chomp $line;
-##print STDERR qq{examining line : '$line'\n};
-             ($line !~ m{ \[\d+\] }xms) && do {
-                 croak qq{unexpected data row:\n$line}
-                   if (!@ids_of_record);
-                 $line =~ s{ (?: \A \s+ | \s+ \z ) }{}gxms;
-                 my @field = split m{ \s+ }, $line;
-                 croak qq{expecting single sequence ID: unexpected format:}.
-                       qq{$line} if @field > 1;
-                 push @ids_of_record, @field;
-print STDERR Dumper \@ids_of_record;
-                 last FORMAT;
-             };
-
-             my @linked_fields = split m{ \[\d+\] }xms, $line;
-             for (@linked_fields) { s{ (?: \A \s+ | \s+ \z ) }{}gxms }
-             # the first field is the one that ISN'T linked
-             my $prefix = shift @linked_fields;
-
-             # EC # may often be absent; but this spots it
-             shift @linked_fields
-                 if $linked_fields[0] =~ m{ \A (?:(?:\d+|[-])[.]){3}(?:\d+|[-]) \z }xms;
-             my ($organism, $genbank, $uniprot, $pdb) = @linked_fields;
-
-             # deal with previous (now complete) record
-print STDERR Dumper \@ids_of_record;
-             # @ids_of_record will change in a moment, so a ref to it cannot
-             # safely be added to the list; so make a copy, and add a ref
-             # to that instead
-             my @this_record_ids = @ids_of_record;
-             push @{$records_in_class{$class}}, \@this_record_ids
-                 if (@ids_of_record);
-
-             # now the current record
-             $n_records++;
-             # $prefix represents the 'key', if this needs to be used
-             # explicitly in later versions of the script
-             print STDERR qq{Protein Name '$prefix'\n};
-             @ids_of_record = ($genbank);
-
-        } # end FORMAT
-
-    } # end LINE
-
-    print STDERR Dumper \%records_in_class;
 }
 
 
