@@ -66,7 +66,7 @@ with the -man option.
 				download of each page will be done only if the
 				page is absent from there.
 
-        -verbosity	INTEGER	Verbosity level; larger values produce more
+	-verbosity	INTEGER	Verbosity level; larger values produce more
 				verbose output. Default 0.
 
 	-usage			Show brief usage summary, then exit.
@@ -146,7 +146,6 @@ with the -man option.
 
 	-urlsuffix	STRING	See -urlprefix, above.
 				
-
 	-browser	STRING	This should be the full command-line prefix of
 				the command to fetch each page. A single
 				argument is appended, i.e. the URL of each
@@ -211,7 +210,7 @@ with the -man option.
 ## Pagination
 
 The tabulated data for each family has a 'front page', e.g. http://www.cazy.org/GH33_all.html 
-(more correctly referred to as the 'Summary' page, because there is a link of
+(more correctly referred to as the '**Summary**' page, because there is a link of
 this name on the various pages which points to this page).
 
 On the front page, no rows of sequence record data are shown. A table is
@@ -227,8 +226,8 @@ from multiple taxonomic categories. In these lists, a 'heading' precedes the
 entries of each of these major taxa. These headings basically consist of 2
 rows (in the HTML sense) - the first row belongs to the class (as in the
 stylesheet sense) named `"royaume"`, while the second is not assigned to a
-stylesheet class, but has an `"id"` attribute, which has the value "line_titre"
-(conversely, the "royaume" row has no id).
+stylesheet class, but has an `"id"` attribute, which has the value `"line_titre"`
+(conversely, the `"royaume"` row has no id).
 
 Therefore, rows with `class="royaume"` and `id="line_titre"` are identified as
 non-data rows, and so are (by default; see `-ignoreclass` and `-ignoretitle`
