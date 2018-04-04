@@ -6,15 +6,15 @@ with the -man option.
 
 
 ## Usage:
-./cazyseqs.pl [ options ] [ -cazyid ] CAZyID [ PAGESDIR ]
+./cazyseqs.pl [ options ] [ -cazyid ] CAZyID [ [ -outdir ] PAGESDIR ]
 
 	-cazyid		STRING	Identifier of CAZy family ID, e.g. "GH95",
 				"CBM40".
 				This is case sensitive because it must match
 				URL at the CAZy website, e.g.:
 				http://www.cazy.org/GH33_all.html;
-				(see `<-host>` and `<-suffix>`; and the explanation
-				below of 'pagination').
+				(see -host and -suffix; and the explanation
+				below of 'pagination'). There is no default.
 				If -cazyid is omitted, then the first
 				non-option argument will be used.
 
@@ -23,6 +23,8 @@ with the -man option.
 				family specified will be expected to be present
 				here, so if they are absent they will be
 				downloaded here first (see -force).
+				If -outdir is omitted, then the second
+				non-option argument will be used.
 
 	-category	STRING	The category of sequences whose IDs (and
 				possibly sequence records too) to download.
@@ -224,12 +226,12 @@ The 'All', 'Structure' and 'Characterized' lists therefore can contain entries
 from multiple taxonomic categories. In these lists, a 'heading' precedes the
 entries of each of these major taxa. These headings basically consist of 2
 rows (in the HTML sense) - the first row belongs to the class (as in the
-stylesheet sense) named "royaume", while the second is not assigned to a
-stylesheet class, but has an 'id' attribute, which has the value "line_titre"
+stylesheet sense) named `"royaume"`, while the second is not assigned to a
+stylesheet class, but has an `"id"` attribute, which has the value "line_titre"
 (conversely, the "royaume" row has no id).
 
-Therefore, rows with class="royaume" and id="line_titre" are identified as
-non-data rows, and so are (by default; see -ignoreclass and -ignoretitle
+Therefore, rows with `class="royaume"` and `id="line_titre"` are identified as
+non-data rows, and so are (by default; see `-ignoreclass` and `-ignoretitle`
 above) ignored.
 
 Many of the 'All' or sub-category listings have too many entries (rows) to
@@ -241,43 +243,43 @@ on the category viewed. For the 'All' listing, it is 1,000. For the taxonomic
 categories, it is 100.
 
 These two styles appear to be specified in the URL by the
-'#pagination_<style>' clause, where <style> is either 'PRINC' (for 'All') and
-'TAXO' (for the taxonomic categories). This can be specified by using the
--context directive for this script.
+`'#pagination_<style>'` clause, where `<style>` is either `'PRINC'` (for 'All') and
+`'TAXO'` (for the taxonomic categories). This can be specified by using the
+`-context` directive for this script.
 
 By default, the script assumes 'All' is required, and so the value of
--pagesize is by default 1000. This can be changed (e.g. to 100, if the style
-is TAXO) by using -pagesize.
+`-pagesize` is by default 1000. This can be changed (e.g. to 100, if the style
+is TAXO) by using `-pagesize.`
 
 
 ## Fair usage guidelines
 
 The principal protein IDs/Accessions used by CAZy are those of the NCBI
 protein database. By default, this script will use those IDs (see
--columnindex), and so will either extract those IDs from the CAZy web pages
-(-get id); *or* extract the original URLs (-get url , as long as none of
--urlprefix, -urlsuffix or -ncbiurls are used); or, if -get url and any of
--urlprefix, -urlsuffix or -ncbiurls *are* used, then a URL will be constructed
+`-columnindex`), and so will either extract those IDs from the CAZy web pages
+(`-get id`); *or* extract the original URLs (`-get url` , as long as *none* of
+`-urlprefix`, `-urlsuffix` or `-ncbiurls` are used); or, if -get url and any of
+`-urlprefix`, `-urlsuffix` or `-ncbiurls` *are* used, then a URL will be constructed
 for each sequence ID. In all these cases, only the CAZy website will be
 interrogated (or simply the local copies of the relevant pages, if they
-exist and -force is not used).
+exist and `-force` is not used).
 
-In contrast, -get seq will interrogate a third-party website, to retrieve the
+In contrast, `-get seq` will interrogate a third-party website, to retrieve the
 sequence records. If there are thousands of sequence records to retrieve, then
 the immediate downloading of all of these serially would risk breaching the
-fair usage guidelines (of the NCBI for example, but it depends on -columnindex,
--urlprefix, -urlsuffix and -ncbiurls - you can direct the script to retrieve
+fair usage guidelines (of the NCBI for example, but it depends on `-columnindex`,
+`-urlprefix`, `-urlsuffix` and `-ncbiurls` - you can direct the script to retrieve
 them from somewhere else if available, for example a local copy of the protein
 database, if one exists).
 
-Please refer to "Guidelines for Scripting Calls to NCBI Servers" at
+Please refer to **"Guidelines for Scripting Calls to NCBI Servers"** at
 https://www.ncbi.nlm.nih.gov/home/about/policies/
 
-Also refer to "Frequency, Timing and Registration of E-utility URL Requests"
+Also refer to **"Frequency, Timing and Registration of E-utility URL Requests"**
 at https://www.ncbi.nlm.nih.gov/books/NBK25497/#_chapter2_Usage_Guidelines_and_Requiremen_
-- an extract follows:
+-an extract follows:
 
-	"In order not to overload the E-utility servers, NCBI recommends that
+      >	"In order not to overload the E-utility servers, NCBI recommends that
 	 users post no more than three URL requests per second and limit large
 	 jobs to either weekends or between 9:00 PM and 5:00 AM Eastern time
 	 during weekdays. Failure to comply with this policy may result in an
@@ -295,5 +297,5 @@ alternative is to simply extract the IDs instead (-get id, i.e. the default)
 and then use these as input to batch Entrez retrieval
 (https://www.ncbi.nlm.nih.gov/sites/batchentrez).
 
-See 
+
 

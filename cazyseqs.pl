@@ -450,8 +450,6 @@ alternative is to simply extract the IDs instead (-get id, i.e. the default)
 and then use these as input to batch Entrez retrieval
 (https://www.ncbi.nlm.nih.gov/sites/batchentrez).
 
-See 
-
 };
 
 
