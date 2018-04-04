@@ -113,7 +113,7 @@ For the GH95 family at any rate, these subsets are 'Archaea', 'Bacteria', 'Eukar
 'unclassified', 'Structure', 'Characterized'. The superset is 'All', which is shown
 by default. Each page is accessed via tabs which link to URLs of the form:
 
-http://www.cazy.org/**familyID**_**setname**.html
+http: //www.cazy.org/**familyID** _ **setname** .html
 
 e.g.
 

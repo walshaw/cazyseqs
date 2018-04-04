@@ -258,7 +258,7 @@ The principal protein IDs/Accessions used by CAZy are those of the NCBI
 protein database. By default, this script will use those IDs (see
 `-columnindex`), and so will either extract those IDs from the CAZy web pages
 (`-get id`); *or* extract the original URLs (`-get url` , as long as *none* of
-`-urlprefix`, `-urlsuffix` or `-ncbiurls` are used); or, if -get url and any of
+`-urlprefix`, `-urlsuffix` or `-ncbiurls` are used); or, if `-get url` and any of
 `-urlprefix`, `-urlsuffix` or `-ncbiurls` *are* used, then a URL will be constructed
 for each sequence ID. In all these cases, only the CAZy website will be
 interrogated (or simply the local copies of the relevant pages, if they
@@ -279,7 +279,7 @@ Also refer to **"Frequency, Timing and Registration of E-utility URL Requests"**
 at https://www.ncbi.nlm.nih.gov/books/NBK25497/#_chapter2_Usage_Guidelines_and_Requiremen_
 -an extract follows:
 
-      >	"In order not to overload the E-utility servers, NCBI recommends that
+>	"In order not to overload the E-utility servers, NCBI recommends that
 	 users post no more than three URL requests per second and limit large
 	 jobs to either weekends or between 9:00 PM and 5:00 AM Eastern time
 	 during weekdays. Failure to comply with this policy may result in an
@@ -293,7 +293,7 @@ etc.
 **PLEASE NOTE THE ABOVE WARNING ABOUT IP ADDRESSES BEING BLOCKED!**
 
 The script will help to make any large downloads more "polite". Of course, an
-alternative is to simply extract the IDs instead (-get id, i.e. the default)
+alternative is to simply extract the IDs instead (`-get id`, i.e. the default)
 and then use these as input to batch Entrez retrieval
 (https://www.ncbi.nlm.nih.gov/sites/batchentrez).
 
